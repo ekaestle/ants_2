@@ -1,9 +1,10 @@
 import numpy as np
+from copy import deepcopy
 from obspy.signal.filter import envelope
-from obspy.signal.util import next_pow_2
-from scipy import fftpack
-from scipy.signal import iirfilter, zpk2sos
-from ants_2.tools.windows import my_centered
+#from obspy.signal.util import next_pow_2
+#from scipy import fftpack
+from scipy.signal import iirfilter, zpk2sos, sosfilt
+#from ants_2.tools.windows import my_centered
 
 def bandpass(freqmin, freqmax, df, corners=4):
     """
@@ -77,82 +78,92 @@ def whiten_taper(ind_fw1,ind_fw2,npts,taper_samples):
     return taper
 
 
-def whiten(tr,freq1,freq2,taper_samples):
+def whiten(spec,sampling_rate,freq1,freq2,taper_samples,white_waterlevel,whitening_taper):
     
     # zeropadding should make things faster
-    n_pad = next_pow_2(tr.stats.npts)
+#    n_pad = next_pow_2(tr.stats.npts)
+#
+#    data = my_centered(tr.data,n_pad)
+    
+    if whitening_taper:
 
-    data = my_centered(tr.data,n_pad)
+        freqaxis=np.fft.rfftfreq((len(spec)-1)*2,sampling_rate)
+        # the freq axis has a one-sample error if its length is odd
+        # this does hardly influence the taper, so I ignore it here
 
-    freqaxis=np.fft.rfftfreq(tr.stats.npts,tr.stats.delta)
+        ind_fw = np.where( ( freqaxis > freq1 ) & ( freqaxis < freq2 ) )[0]
 
-    ind_fw = np.where( ( freqaxis > freq1 ) & ( freqaxis < freq2 ) )[0]
+        if len(ind_fw) == 0:
+            return(np.zeros((len(spec)-1)*2))
 
-    if len(ind_fw) == 0:
-        return(np.zeros(tr.stats.npts))
-
-    ind_fw1 = ind_fw[0]
+        ind_fw1 = ind_fw[0]
     
-    ind_fw2 = ind_fw[-1]
+        ind_fw2 = ind_fw[-1]
     
-    # Build a cosine taper for the frequency domain
-    #df = 1/(tr.stats.npts*tr.stats.delta)
+        # Build a cosine taper for the frequency domain
+        #df = 1/(tr.stats.npts*tr.stats.delta)
     
-    # Taper 
-    white_tape = whiten_taper(ind_fw1,ind_fw2,len(freqaxis),taper_samples)
+        # Taper 
+        white_tape = whiten_taper(ind_fw1,ind_fw2,len(freqaxis),taper_samples)
     
-    # Transform data to frequency domain
-    tr.taper(max_percentage=0.05, type='cosine')
-    spec = np.fft.rfft(tr.data)
+    if white_waterlevel:
+        # Don't divide by 0
+        tol = np.max(np.abs(spec)) / 1e5
+        if tol == 0.0:
+            spec = np.exp(1j * np.angle(spec))
+        else:
+            spec /= (np.abs(spec)+tol)
+    else:
+        # whiten. This elegant solution is from MSNoise: (but the above is faster)
+        spec =  np.exp(1j * np.angle(spec))
     
-    # Don't divide by 0
-    #tol = np.max(np.abs(spec)) / 1e5
-    #spec /= np.abs(spec+tol)
+    if whitening_taper:
+        spec *= white_tape
     
-    # whiten. This elegant solution is from MSNoise:
-    spec =  white_tape * np.exp(1j * np.angle(spec))
-    
+    return spec
     # Go back to time domain
     # Difficulty here: The time fdomain signal might no longer be real.
+    # I don't think it actually makes a difference in the result (Emanuel)
     # Hence, irfft cannot be used.
-    spec_neg = np.conjugate(spec)[::-1]
-    spec = np.concatenate((spec,spec_neg[:-1]))
-
-    tr.data = np.real(np.fft.ifft(spec))
+#    spec_neg = np.conjugate(spec)[::-1]
+#    spec = np.concatenate((spec,spec_neg[1:-1]))
+#
+#    tr.data = np.real(np.fft.ifft(spec))
     
     
-def cap(tr,cap_thresh):
+def cap(data,cap_thresh):
     
-    std = np.std(tr.data*1.e6)
+    std = np.std(data*1.e6)
     gllow = cap_thresh * std * -1
     glupp = cap_thresh * std
-    tr.data = np.clip(tr.data*1.e6,gllow,glupp)/1.e6
+    return np.clip(data*1.e6,gllow,glupp)/1.e6
 
     #return tr
     
-def ram_norm(tr,winlen,prefilt=None):
+def ram_norm(data,sampling_rate,winlen,prefilt=None):
     
-    trace_orig = tr.copy()
-    hlen = int(winlen*tr.stats.sampling_rate/2.)
+    data_orig = deepcopy(data)
+    hlen = int(winlen*sampling_rate/2.)
 
-    if 2*hlen >= tr.stats.npts:
-        tr.data = np.zeros(tr.stats.npts)
-        return()
+    if 2*hlen >= len(data):
+        return np.zeros(len(data))
 
 
-    weighttrace = np.zeros(tr.stats.npts)
+    weighttrace = np.zeros(len(data))
     
     if prefilt is not None:
-        tr.filter('bandpass',freqmin=prefilt[0],freqmax=prefilt[1],\
-        corners=prefilt[2],zerophase=True)
+        sos = bandpass(freqmin=prefilt[0],freqmax=prefilt[1],
+                df=sampling_rate,corners=prefilt[2])
+        temp = sosfilt(sos,data)
+        data = sosfilt(sos,temp[::-1])[::-1]
         
-    envlp = envelope(tr.data)
+    envlp = envelope(data)
 
-    for n in xrange(hlen,tr.stats.npts-hlen):
+    for n in range(hlen,len(data)-hlen):
         weighttrace[n] = np.sum(envlp[n-hlen:n+hlen+1]/(2.*hlen+1))
         
     weighttrace[0:hlen] = weighttrace[hlen]
     weighttrace[-hlen:] = weighttrace[-hlen-1]
     
-    tr.data = trace_orig.data / weighttrace
+    return data_orig.data / weighttrace
    

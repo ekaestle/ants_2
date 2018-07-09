@@ -465,7 +465,7 @@ class ConfigCorrelation(object):
             msg = '\'n_stationpairs\' in config_correlation.json must be integer.'
             raise ValueError(msg)
 
-        if not isinstance(self.interm_stack,int):
+        if not (isinstance(self.interm_stack,int) or isinstance(self.interm_stack,str)):
             msg = '\'interm_stack\' in config_correlation.json must be integer.'
             raise ValueError(msg)
 

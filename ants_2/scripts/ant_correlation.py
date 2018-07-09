@@ -65,7 +65,7 @@ def correlate():
 
     # - get list of files available;
     # - get blocks of channel pairs
-
+    print("creating correlation inventory.")
     c = correlation_inventory(cfg)
     
 
@@ -78,7 +78,10 @@ def correlate():
         block = deepcopy(b)
         # initialize a block of correlations
         c = CorrBlock(block,cfg)
+        t0 = time.time()
         c.run(output_file = ofid)
+        print("processing and correlating took %.1fs" %(time.time()-t0),file=ofid)
+        print("processing and correlating took %.1fs" %(time.time()-t0),flush=True)
 
 # - append all the stationxmls to the asdf file, if asdf output is chosen
 

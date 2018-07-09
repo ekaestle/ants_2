@@ -112,5 +112,16 @@ def cross_covar(data1, data2, max_lag_samples, normalize, params=False):
     return my_centered(ccv,2*max_lag_samples+1),params
 
 
+# if the input is already in the frequency domain
+def cross_covar_fd(data1, data2, max_lag_samples):
+    
+   
+    ccv = np.conj(data1)*data2
+    ccv_neg = np.conjugate(ccv)[::-1]
+    ccv = np.concatenate((ccv,ccv_neg[1:-1]))                    
+    ccv = np.real(np.fft.ifft(ccv))
+    ccv = np.fft.ifftshift(ccv)
+                            
+    return my_centered(ccv,2*max_lag_samples+1)
 
 

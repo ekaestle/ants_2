@@ -1,4 +1,4 @@
-import os
+import os, re
 from glob import glob
 from obspy import UTCDateTime
 from copy import deepcopy
@@ -9,12 +9,65 @@ def find_files(indirs, format):
     content=list()
 
     for indir in indirs:
-        
-        content.extend(glob(os.path.join(indir,'*'+format.lower())))
-        content.extend(glob(os.path.join(indir,'*'+format.upper())))
+
+        if "*" in format:
+            content.extend(glob(os.path.join(indir,format),recursive=True))
+        else:       
+            content.extend(glob(os.path.join(indir,'*'+format.lower())))
+            content.extend(glob(os.path.join(indir,'*'+format.upper())))
         
     content.sort()
     
+    return content
+
+def find_files_irene(indirs,format,masterlist='./AlpArray_MasterStationList.txt'):
+    statlist = ['DAVOX']#['A282A','A303A','A101B','A255A','DAVOX','BRMO','BFO']
+    masterdict = {}
+    with open(masterlist,'r') as f:
+        lines = f.readlines()
+    for line in lines:
+        entry = line.split()
+        network = str(entry[1])
+        station = str(entry[2])
+        channel = str(entry[5].split("_")[0])
+        if 'EH' in channel:
+            continue
+        if 'HN' in channel:
+            continue
+        try:
+            location = str(entry[5].split("_")[1])
+        except:
+            location = ''
+        try:
+            masterdict[network]
+        except:
+            masterdict[network] = {}
+        masterdict[network][station] = {}
+        masterdict[network][station]['channel'] = channel
+        masterdict[network][station]['location'] = location
+    content = list()
+    print('creating a list of available files...')
+    for indir in indirs:
+        pathlist_new = [os.path.join(dir_,f) for dir_,_,files in os.walk(indir) if ('HH' in dir_ or 'BH' in dir_) for f in files]
+        for i,filepath in enumerate(pathlist_new):
+            try:
+                network,statname,location,channel,code,year,jday = filepath.split('/')[-1].split('.')
+            except:
+                print('filename does not follow convention:',filepath)
+                continue
+            if not(statname in statlist):
+                continue
+            year = int(year)
+            jday = int(jday)
+            # check alparray master station list
+            try:
+                if not (masterdict[network][statname]['channel'] == channel[:2] and masterdict[network][statname]['location'] == location):
+                    continue
+            except: # if there is no entry in Irene's list, we rather skip this station
+                #ignored_statlist.append((network,statname))
+                continue
+            content.append(filepath)
+    content.sort()
     return content
 
 def name_processed_file(stats,startonly=False):
@@ -44,7 +97,8 @@ def name_processed_file(stats,startonly=False):
 
 def name_correlation_file(sta1,sta2,corr_type,fmt='SAC'):
 
-    name = '{}--{}.{}.{}'.format(sta1,sta2,corr_type,fmt)
+    #name = '{}--{}.{}.{}'.format(sta1,sta2,corr_type,fmt)
+    name = '{}--{}.{}'.format(sta1,sta2,fmt)
    
     return(name)
 
@@ -65,7 +119,10 @@ def file_inventory(cfg):
 
 
     # list all files in input directories
-    files = find_files(indirs,filefmt)
+    if False:#"*" in filefmt:
+        files = find_files_irene(indirs,filefmt)
+    else:
+        files = find_files(indirs,filefmt)
     
     for f in files:
 
@@ -142,17 +199,13 @@ def channel_pairs(channels1,channels2,cfg):
 
 
     channels = []
+    comp_pairs = []
+    cha_pairs = []
     tensor_comp = cfg.corr_tensorcomponents
 
 
     for c1 in channels1:
         for c2 in channels2:
-            
-            if cfg.update:
-                f = name_correlation_file(c1,c2,cfg.corr_type)
-                f = os.path.join('data','correlations',f)
-                if os.path.exists(f):
-                    continue
 
             loc1 = c1.split('.')[2]
             loc2 = c2.split('.')[2]
@@ -166,34 +219,65 @@ def channel_pairs(channels1,channels2,cfg):
             if loc1 != loc2 and not cfg.locations_mix:
                 continue
 
-            comp = c1[-1] + c2[-1]
+            comp_pairs.append([c1[-1],c2[-1]])
             
-            if comp == 'EE':
-                comp = 'TT'
-
-            if comp == 'NN':
-                comp = 'RR'
-
-            if comp == 'EN':
-                comp = 'TR'
-
-            if comp == 'NE':
-                comp = 'RT'
-
-            if comp == 'NZ':
-                comp = 'RZ'
-
-            if comp == 'ZN':
-                comp = 'ZR'
-
-            if comp == 'EZ':
-                comp = 'TZ'
-
-            if comp == 'ZE':
-                comp = 'ZT'
-
-            if comp in tensor_comp:
-                channels.append((c1,c2))
+            cha1 = re.sub('E$','T',c1)
+            cha1 = re.sub('N$','R',cha1)
+            cha2 = re.sub('E$','T',c2)
+            cha2 = re.sub('N$','R',cha2)  
+            
+            if cfg.update:
+                f = name_correlation_file(cha1,cha2,cfg.corr_type)
+                f = os.path.join('data','correlations',f)
+                if os.path.exists(f):
+                    continue
+                
+            cha_pairs.append((cha1,cha2))
+   
+     
+    for comp in tensor_comp:
+        
+        if comp == 'RR' or comp == 'TR' or comp == 'RT' or comp == 'TT':
+                        
+            if (['E','E'] in comp_pairs and ['N','N'] in comp_pairs and
+                ['E','N'] in comp_pairs and ['N','E'] in comp_pairs):
+                                
+                for cha_pair in cha_pairs:
+                    
+                    if cha_pair[0][-1] == comp[0] and cha_pair[1][-1] == comp[1]:
+                        
+                        channels.append(cha_pair)
+        
+                
+        elif comp == 'ZR' or comp == 'ZT':
+            
+            if ['Z','E'] in comp_pairs and ['Z','N'] in comp_pairs:
+                
+                for cha_pair in cha_pairs:
+                    
+                    if cha_pair[0][-1] == comp[0] and cha_pair[1][-1] == comp[1]:
+                        
+                        channels.append(cha_pair)
+        
+        elif comp == 'RZ' or comp == 'TZ':
+            
+            if ['E','Z'] in comp_pairs and ['N','Z'] in comp_pairs:
+                
+                for cha_pair in cha_pairs:
+                    
+                    if cha_pair[0][-1] == comp[0] and cha_pair[1][-1] == comp[1]:
+                        
+                        channels.append(cha_pair)
+                        
+        elif comp == 'ZZ':
+            
+            if ['Z','Z'] in comp_pairs:
+                
+                for cha_pair in cha_pairs:
+                    
+                    if cha_pair[0][-1] == comp[0] and cha_pair[1][-1] == comp[1]:
+                        
+                        channels.append(cha_pair)
 
     return(channels)
 
@@ -271,10 +355,18 @@ class correlation_inventory(object):
             block.channel_pairs.append(cpairs)
 
         # Make a unique channel list for this block
+        # for an R or T channel, both horizontal components are included               
         for cp in block.channel_pairs:
             for c in cp:
-                block.channels.append(c[0])
-                block.channels.append(c[1])
+                for cha in c:
+                    if cha[-1] == 'R':
+                        block.channels.append(re.sub('R$','N',cha))
+                        block.channels.append(re.sub('R$','E',cha))
+                    elif cha[-1] == 'T':
+                        block.channels.append(re.sub('T$','N',cha))
+                        block.channels.append(re.sub('T$','E',cha))
+                    else:
+                        block.channels.append(cha)
         block.channels = list(set(block.channels))
 
 

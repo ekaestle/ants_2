@@ -40,7 +40,7 @@ def merge_traces(data, Fs, n_interp=0,maxgap=10.0, ofid=None):
             trace.stats.sampling_rate = \
             round(trace.stats.sampling_rate, 4)
             # Throw data with the wrong sampling rate out.
-            if trace.stats.sampling_rate not in Fs:
+            if len(Fs)>0 and trace.stats.sampling_rate not in Fs:
                 print('Bad sampling rate: %g on trace %s' 
                 %(trace.stats.sampling_rate,trace.id), file=ofid)
                 continue
